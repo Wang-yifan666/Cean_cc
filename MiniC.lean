@@ -1,3 +1,9 @@
--- This module serves as the root of the `MiniC` library.
--- Import modules here that should be built as part of the library.
-import MiniC.Basic
+import MiniC.AST
+import MiniC.Env
+import MiniC.Eval
+import MiniC.Stmt
+import MiniC.Exec
+import MiniC.Optimize
+
+import MiniC.Lexer
+import MiniC.Parser
