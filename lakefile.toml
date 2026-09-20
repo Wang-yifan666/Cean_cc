@@ -1,0 +1,10 @@
+name = "MiniC"
+version = "0.1.0"
+defaultTargets = ["minic"]
+
+[[lean_lib]]
+name = "MiniC"
+
+[[lean_exe]]
+name = "minic"
+root = "Main"
