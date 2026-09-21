@@ -1,4 +1,4 @@
-namespace MiniC
+namespace Cean
 
 inductive Token where
   | kwInt
@@ -218,9 +218,50 @@ def tokenize
     Except String (List Token) :=
   lexChars source.toList
 
-end MiniC
+end Cean
 
 
--- Test
-open MiniC
-#eval tokenize "int x = 1 + 2 * 3;"
+/- ============================================================
+   自测
+   ============================================================ -/
+
+open Cean
+
+-- 关键字 / 标识符 / 数字 / 运算符 / 分隔符
+#guard
+  (tokenize "int x = 1 + 2 * 3;").toOption
+    == some [.kwInt, .ident "x", .assign,
+             .number 1, .plus, .number 2, .star, .number 3, .semi]
+
+-- 所有单字符运算符
+#guard
+  (tokenize "- + * < ! ( ) { } ;").toOption
+    == some [.minus, .plus, .star, .less, .bang,
+             .lparen, .rparen, .lbrace, .rbrace, .semi]
+
+-- 双字符运算符
+#guard (tokenize "== &&").toOption == some [.eqeq, .andand]
+
+-- 其余关键字
+#guard
+  (tokenize "if else while main").toOption
+    == some [.kwIf, .kwElse, .kwWhile, .kwMain]
+
+-- 行注释被跳过
+#guard
+  (tokenize "// 注释\nx = 1;").toOption
+    == some [.ident "x", .assign, .number 1, .semi]
+
+-- 块注释被跳过（含跨行）
+#guard
+  (tokenize "/* 注释\n   跨行 */ x").toOption
+    == some [.ident "x"]
+
+-- 下划线开头的标识符合法
+#guard (tokenize "_x1").toOption == some [.ident "_x1"]
+
+-- 非法字符报错
+#guard (tokenize "x $ 1;").isOk == false
+
+-- 块注释没有闭合时报错
+#guard (tokenize "/* 没有闭合").isOk == false

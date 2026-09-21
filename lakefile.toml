@@ -1,10 +1,10 @@
-name = "MiniC"
+name = "cean"
 version = "0.1.0"
-defaultTargets = ["minic"]
+defaultTargets = ["cean"]
 
 [[lean_lib]]
-name = "MiniC"
+name = "Cean"
 
 [[lean_exe]]
-name = "minic"
+name = "cean"
 root = "Main"

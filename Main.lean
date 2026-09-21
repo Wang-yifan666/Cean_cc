@@ -1,6 +1,6 @@
-import MiniC
+import Cean
 
-open MiniC
+open Cean
 
 
 private def printVariables
@@ -91,6 +91,6 @@ def main
   | _ =>
 
       IO.eprintln
-        "usage: minic <source.c>"
+        "usage: cean <source.c>"
 
       pure 1

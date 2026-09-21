@@ -1,10 +1,10 @@
 import Init.Control.State
 
-import MiniC.Lexer
-import MiniC.AST
-import MiniC.Stmt
+import Cean.Lexer
+import Cean.AST
+import Cean.Stmt
 
-namespace MiniC
+namespace Cean
 
 /-
 Parser α 的本质：
@@ -280,4 +280,78 @@ def parseSource (source : String) : Except String Stmt := do
   let tokens ← tokenize source
   parseProgram.run' tokens
 
-end MiniC
+end Cean
+
+
+/- ============================================================
+   自测
+   ============================================================ -/
+
+open Cean
+
+-- 注意：块内的语句列表会被 seqMany 收尾，末尾一定带一个 skip
+
+-- 乘法优先级高于加法：1 + 2 * 3  解析成  1 + (2 * 3)
+#guard
+  (parseSource "int main() { int x = 1 + 2 * 3; }").toOption
+    == some (Stmt.seqMany [
+         .decl "x" (.add (.const 1) (.mul (.const 2) (.const 3)))])
+
+-- 括号可以覆盖优先级：(1 + 2) * 3
+#guard
+  (parseSource "int main() { int x = (1 + 2) * 3; }").toOption
+    == some (Stmt.seqMany [
+         .decl "x" (.mul (.add (.const 1) (.const 2)) (.const 3))])
+
+-- 加减法左结合：1 - 2 + 3  解析成  (1 - 2) + 3
+#guard
+  (parseSource "int main() { int x = 1 - 2 + 3; }").toOption
+    == some (Stmt.seqMany [
+         .decl "x" (.add (.sub (.const 1) (.const 2)) (.const 3))])
+
+-- 空程序
+#guard (parseSource "int main() { }").toOption == some .skip
+
+-- 注释被跳过
+#guard
+  (parseSource "int main() { /* 块注释 */ int x = 1; // 行注释\n}").toOption
+    == some (Stmt.seqMany [.decl "x" (.const 1)])
+
+-- while 语句（循环体同样被 seqMany 收尾）
+#guard
+  (parseSource "int main() { while (x < 1) { x = x + 1; } }").toOption
+    == some (Stmt.seqMany [
+         .while (.less (.var "x") (.const 1))
+                (Stmt.seqMany [.assign "x" (.add (.var "x") (.const 1))])])
+
+-- if / else 语句
+#guard
+  (parseSource "int main() { if (x == 1) { x = 2; } else { x = 3; } }").toOption
+    == some (Stmt.seqMany [
+         .ifThenElse (.eq (.var "x") (.const 1))
+                     (Stmt.seqMany [.assign "x" (.const 2)])
+                     (Stmt.seqMany [.assign "x" (.const 3)])])
+
+-- 没有 else 时补一个 skip
+#guard
+  (parseSource "int main() { if (x == 1) { x = 2; } }").toOption
+    == some (Stmt.seqMany [
+         .ifThenElse (.eq (.var "x") (.const 1))
+                     (Stmt.seqMany [.assign "x" (.const 2)]) .skip])
+
+-- 多个语句按书写顺序串联
+#guard
+  (parseSource "int main() { int a = 1; int b = 2; }").toOption
+    == some (Stmt.seqMany [.decl "a" (.const 1), .decl "b" (.const 2)])
+
+-- 缺少分号要报错
+#guard (parseSource "int main() { int x = 1 }").isOk == false
+
+-- 缺少 main 要报错
+#guard (parseSource "int x = 1;").isOk == false
+
+-- main 之后还有内容要报错
+#guard (parseSource "int main() { } int x = 1;").isOk == false
+
+-- 未闭合的花括号要报错
+#guard (parseSource "int main() { int x = 1;").isOk == false

@@ -1,6 +1,6 @@
-import MiniC.AST
+import Cean.AST
 
-namespace MiniC
+namespace Cean
 
 def optimize : AExpr → AExpr
   | .const n =>
@@ -57,4 +57,4 @@ def optimize : AExpr → AExpr
       | l, r =>
           .mul l r
 
-end MiniC
+end Cean

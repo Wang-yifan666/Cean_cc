@@ -1,6 +1,6 @@
-import MiniC.AST
+import Cean.AST
 
-namespace MiniC
+namespace Cean
 
 -- 通过递归定义语句
 inductive Stmt where
@@ -58,4 +58,36 @@ def Stmt.declaredNames : Stmt → List String
   | .while _ body =>
       body.declaredNames
 
-end MiniC
+end Cean
+
+
+/- ============================================================
+   自测
+   ============================================================ -/
+
+open Cean
+
+-- 空列表折叠成 skip
+#guard Stmt.seqMany [] == Stmt.skip
+
+-- 两条语句折叠成右结合的嵌套 seq
+#guard
+  Stmt.seqMany [.skip, .skip]
+    == Stmt.seq .skip (Stmt.seq .skip .skip)
+
+-- declaredNames 收集所有声明点，赋值不算
+#guard (Stmt.assign "x" (.const 1)).declaredNames == []
+#guard
+  (Stmt.seq (.decl "a" (.const 1)) (.decl "b" (.const 2))).declaredNames
+    == ["a", "b"]
+
+-- 两个分支里的声明都会被收集
+#guard
+  (Stmt.ifThenElse (.eq (.const 0) (.const 0))
+    (.decl "t" (.const 1)) (.decl "e" (.const 2))).declaredNames
+    == ["t", "e"]
+
+-- 循环体里的声明会被收集
+#guard
+  (Stmt.while (.less (.const 0) (.const 1)) (.decl "i" (.const 0))).declaredNames
+    == ["i"]
