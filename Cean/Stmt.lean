@@ -118,7 +118,7 @@ open Cean
     ==
   ["a", "b"]
 
-#check Expr
+open Cean
 #guard
   (Stmt.ifThenElse
     (.binary .eq
