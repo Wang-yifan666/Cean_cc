@@ -3,95 +3,204 @@ import Cean.Env
 
 namespace Cean
 
--- 通过递归定义算术表达式的求值
-def evalA (env : Env) : AExpr → Except String Int
-  | .const n =>      -- 表达式是常数
-      .ok n          -- 携带正常值
+
+def isTruthy (value : Int) : Bool :=
+  value != 0
+
+
+def boolToInt (value : Bool) : Int :=
+  if value then 1 else 0
+
+
+def evalExpr
+    (env : Env) :
+    Expr →
+    Except String Int
+
+  | .intLit n =>
+      .ok n
 
   | .var name =>
       match Env.get env name with
       | some value =>
           .ok value
-      | none =>     -- 一旦出现未定义的变量，返回错误
+      | none =>
           .error s!"undefined variable: {name}"
 
-  | .add lhs rhs => do   -- 表达式递归 左 + 右
-      let l ← evalA env lhs
-      let r ← evalA env rhs
+  | .unary .logicalNot expr => do
+      let value ← evalExpr env expr
+
+      pure (
+        if isTruthy value then
+          0
+        else
+          1
+      )
+
+  | .binary .add lhs rhs => do
+      let l ← evalExpr env lhs
+      let r ← evalExpr env rhs
       pure (l + r)
 
-  | .sub lhs rhs => do
-      let l ← evalA env lhs
-      let r ← evalA env rhs
+  | .binary .sub lhs rhs => do
+      let l ← evalExpr env lhs
+      let r ← evalExpr env rhs
       pure (l - r)
 
-  | .mul lhs rhs => do
-      let l ← evalA env lhs
-      let r ← evalA env rhs
+  | .binary .mul lhs rhs => do
+      let l ← evalExpr env lhs
+      let r ← evalExpr env rhs
       pure (l * r)
 
+  | .binary .lt lhs rhs => do
+      let l ← evalExpr env lhs
+      let r ← evalExpr env rhs
 
-def evalB (env : Env) : BExpr → Except String Bool
-  | .eq lhs rhs => do
-      let l ← evalA env lhs
-      let r ← evalA env rhs
-      pure (l == r)
+      pure (
+        boolToInt (decide (l < r))
+      )
 
-  | .less lhs rhs => do
-      let l ← evalA env lhs
-      let r ← evalA env rhs
-      pure (decide (l < r))
+  | .binary .eq lhs rhs => do
+      let l ← evalExpr env lhs
+      let r ← evalExpr env rhs
 
-  | .and lhs rhs => do    -- 短路
-      let l ← evalB env lhs
-      if l then
-        evalB env rhs
+      pure (
+        boolToInt (l == r)
+      )
+
+  | .binary .logicalAnd lhs rhs => do
+      /-
+      必须 short-circuit。
+
+      0 && undefined_variable
+
+      不允许求值 RHS。
+      -/
+      let l ← evalExpr env lhs
+
+      if isTruthy l then
+        let r ← evalExpr env rhs
+        pure (boolToInt (isTruthy r))
       else
-        pure false
+        pure 0
 
-  | .not e => do
-      let value ← evalB env e
-      pure (!value)
 
 end Cean
 
 
-/- ============================================================
-   自测
-   ============================================================ -/
-
+-- Test
 open Cean
 
 private def testEnv : Env :=
-  Env.set (Env.set Env.empty "x" 3) "y" 4
+  Env.set
+    (Env.set Env.empty "x" 3)
+    "y"
+    4
 
--- 算术表达式
-#guard (evalA testEnv (.add (.const 1) (.mul (.const 2) (.const 3)))).toOption == some 7
-#guard (evalA testEnv (.sub (.const 1) (.const 4))).toOption == some (-3)
-#guard (evalA testEnv (.var "x")).toOption == some 3
 
--- 未定义变量报错
-#guard (evalA testEnv (.var "z")).isOk == false
-
--- 比较
-#guard (evalB testEnv (.less (.var "x") (.var "y"))).toOption == some true
-#guard (evalB testEnv (.less (.var "y") (.var "x"))).toOption == some false
-#guard (evalB testEnv (.eq (.var "x") (.var "x"))).toOption == some true
-#guard (evalB testEnv (.eq (.var "x") (.var "y"))).toOption == some false
-
--- 取反
-#guard (evalB testEnv (.not (.less (.const 1) (.const 0)))).toOption == some true
-
--- && 短路：右侧引用了未定义变量，但左侧已经是 false，所以右侧不应被求值
 #guard
-  (evalB testEnv
-    (.and (.less (.const 1) (.const 0))
-          (.eq (AExpr.var "undefined") (.const 0)))).toOption
-    == some false
+  (evalExpr testEnv
+    (.binary .add
+      (.intLit 1)
+      (.binary .mul
+        (.intLit 2)
+        (.intLit 3)))).toOption
+  ==
+  some 7
 
--- 对照：左侧为 true 时右侧会被求值，于是报未定义变量
+
 #guard
-  (evalB testEnv
-    (.and (.less (.const 0) (.const 1))
-          (.eq (AExpr.var "undefined") (.const 0)))).isOk
-    == false
+  (evalExpr testEnv
+    (.binary .sub
+      (.intLit 1)
+      (.intLit 4))).toOption
+  ==
+  some (-3)
+
+
+#guard
+  (evalExpr testEnv (.var "x")).toOption
+    ==
+  some 3
+
+
+#guard
+  (evalExpr testEnv (.var "z")).isOk
+    ==
+  false
+
+
+#guard
+  (evalExpr testEnv
+    (.binary .lt
+      (.var "x")
+      (.var "y"))).toOption
+  ==
+  some 1
+
+
+#guard
+  (evalExpr testEnv
+    (.binary .eq
+      (.var "x")
+      (.var "y"))).toOption
+  ==
+  some 0
+
+
+-- !0 == 1
+#guard
+  (evalExpr testEnv
+    (.unary .logicalNot
+      (.intLit 0))).toOption
+  ==
+  some 1
+
+
+-- !42 == 0
+#guard
+  (evalExpr testEnv
+    (.unary .logicalNot
+      (.intLit 42))).toOption
+  ==
+  some 0
+
+
+-- C: (1 < 2) + 10 == 11
+#guard
+  (evalExpr testEnv
+    (.binary .add
+      (.binary .lt
+        (.intLit 1)
+        (.intLit 2))
+      (.intLit 10))).toOption
+  ==
+  some 11
+
+
+-- false && RHS，RHS 不应执行
+#guard
+  (evalExpr testEnv
+    (.binary .logicalAnd
+      (.binary .lt
+        (.intLit 1)
+        (.intLit 0))
+      (.binary .eq
+        (.var "undefined")
+        (.intLit 0)))).toOption
+  ==
+  some 0
+
+
+-- true && RHS，RHS 会执行，因此报错
+#guard
+  (evalExpr testEnv
+    (.binary .logicalAnd
+      (.binary .lt
+        (.intLit 0)
+        (.intLit 1))
+      (.binary .eq
+        (.var "undefined")
+        (.intLit 0)))).isOk
+  ==
+  false

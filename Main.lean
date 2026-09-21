@@ -26,6 +26,21 @@ def main
 
   match args with
 
+  | ["--llvm-smoke"] =>
+
+      IO.println "=== LLVM Smoke Test ==="
+
+      match ← Cean.LLVM.runSmokeTest with
+      | .error msg =>
+          IO.eprintln msg
+          pure 1
+
+      | .ok (irPath, exePath) =>
+          IO.println s!"LLVM IR:   {irPath}"
+          IO.println s!"Executable: {exePath}"
+          IO.println "LLVM toolchain smoke test succeeded."
+          pure 0
+
   | [filename] =>
 
       try
@@ -34,7 +49,6 @@ def main
           IO.FS.readFile filename
 
         match parseSource source with
-
         | .error msg =>
 
             IO.eprintln
@@ -60,7 +74,6 @@ def main
             with
 
             | .error msg =>
-
                 IO.eprintln
                   s!"runtime error: {msg}"
 
@@ -87,10 +100,8 @@ def main
 
         pure 1
 
-
   | _ =>
-
       IO.eprintln
-        "usage: cean <source.c>"
+        "usage: cean <source.c> | cean --llvm-smoke"
 
       pure 1

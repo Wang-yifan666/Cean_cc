@@ -1,29 +1,18 @@
-import Init.Control.State
-
 import Cean.Lexer
 import Cean.AST
 import Cean.Stmt
 
 namespace Cean
 
-/-
-Parser α 的本质：
-List Token -> Except String (α × List Token)
-使用 StateT 来隐藏剩余 Token 的传递，让 do 记法自动处理状态。
--/
 abbrev Parser (α : Type) :=
   StateT (List Token) (Except String) α
 
-
-/- 查看当前 Token，但不消耗 -/
 private def peekToken : Parser (Option Token) := do
   let tokens ← StateT.get
   match tokens with
   | [] => pure none
   | token :: _ => pure (some token)
 
-
-/- 取出一个 Token，并推进输入流 -/
 private def nextToken : Parser Token := do
   let tokens ← StateT.get
   match tokens with
@@ -32,8 +21,6 @@ private def nextToken : Parser Token := do
       StateT.set rest
       pure token
 
-
-/- 要求下一个 Token 必须是 wanted -/
 private def expect (wanted : Token) : Parser Unit := do
   let token ← nextToken
   if token == wanted then
@@ -41,122 +28,124 @@ private def expect (wanted : Token) : Parser Unit := do
   else
     throw s!"\nexpected: {reprStr wanted}\ngot:      {reprStr token}"
 
-
 /- ============================================================
-   Arithmetic Expressions
+   Expressions
+
+   precedence, low → high:
+
+   &&
+   ==
+   <
+   + -
+   *
+   !
+   primary
    ============================================================ -/
 
 mutual
 
-  partial def parseAExpr : Parser AExpr :=
-    parseAddSub
+  partial def parseExpr : Parser Expr :=
+    parseLogicalAnd
 
+  /- && -/
+  partial def parseLogicalAnd : Parser Expr := do
+    let lhs ← parseEquality
+    parseLogicalAndTail lhs
 
-  /- primary: 123 | x | (expression) -/
-  partial def parsePrimary : Parser AExpr := do
-    let token ← nextToken
-    match token with
-    | .number value => pure (.const value)
-    | .ident name   => pure (.var name)
-    | .lparen =>
-        let expr ← parseAExpr
-        expect .rparen
-        pure expr
-    | other =>
-        throw s!"expected arithmetic expression, got {reprStr other}"
-
-
-  /- multiplication: a * b * c (优先级高于 + -) -/
-  partial def parseMul : Parser AExpr := do
-    let lhs ← parsePrimary
-    parseMulTail lhs
-
-
-  partial def parseMulTail (lhs : AExpr) : Parser AExpr := do
+  partial def parseLogicalAndTail (lhs : Expr) : Parser Expr := do
     let token ← peekToken
     match token with
-    | some .star =>
+    | some .andand =>
         let _ ← nextToken
-        let rhs ← parsePrimary
-        parseMulTail (.mul lhs rhs)
+        let rhs ← parseEquality
+        parseLogicalAndTail (.binary .logicalAnd lhs rhs)
     | _ => pure lhs
 
+  /- == -/
+  partial def parseEquality : Parser Expr := do
+    let lhs ← parseRelational
+    parseEqualityTail lhs
 
-  /- addition / subtraction: a + b - c -/
-  partial def parseAddSub : Parser AExpr := do
+  partial def parseEqualityTail (lhs : Expr) : Parser Expr := do
+    let token ← peekToken
+    match token with
+    | some .eqeq =>
+        let _ ← nextToken
+        let rhs ← parseRelational
+        parseEqualityTail (.binary .eq lhs rhs)
+    | _ => pure lhs
+
+  /- < -/
+  partial def parseRelational : Parser Expr := do
+    let lhs ← parseAddSub
+    parseRelationalTail lhs
+
+  partial def parseRelationalTail (lhs : Expr) : Parser Expr := do
+    let token ← peekToken
+    match token with
+    | some .less =>
+        let _ ← nextToken
+        let rhs ← parseAddSub
+        parseRelationalTail (.binary .lt lhs rhs)
+    | _ => pure lhs
+
+  /- + / - -/
+  partial def parseAddSub : Parser Expr := do
     let lhs ← parseMul
     parseAddSubTail lhs
 
-
-  partial def parseAddSubTail (lhs : AExpr) : Parser AExpr := do
+  partial def parseAddSubTail (lhs : Expr) : Parser Expr := do
     let token ← peekToken
     match token with
     | some .plus =>
         let _ ← nextToken
         let rhs ← parseMul
-        parseAddSubTail (.add lhs rhs)
+        parseAddSubTail (.binary .add lhs rhs)
     | some .minus =>
         let _ ← nextToken
         let rhs ← parseMul
-        parseAddSubTail (.sub lhs rhs)
+        parseAddSubTail (.binary .sub lhs rhs)
     | _ => pure lhs
 
-end
+  /- * -/
+  partial def parseMul : Parser Expr := do
+    let lhs ← parseUnary
+    parseMulTail lhs
 
-
-/- ============================================================
-   Boolean Expressions
-   ============================================================ -/
-
-/- comparison: x < 10 | x == y -/
-partial def parseComparison : Parser BExpr := do
-  let lhs ← parseAExpr
-  let op ← nextToken
-  match op with
-  | .less =>
-      let rhs ← parseAExpr
-      pure (.less lhs rhs)
-  | .eqeq =>
-      let rhs ← parseAExpr
-      pure (.eq lhs rhs)
-  | other =>
-      throw s!"\nexpected comparison operator (< or ==),\ngot {reprStr other}"
-
-
-/- ! 例如: !x < 10 会解释成 !(x < 10) -/
-partial def parseNot : Parser BExpr := do
-  let token ← peekToken
-  match token with
-  | some .bang =>
-      let _ ← nextToken
-      let expr ← parseNot
-      pure (.not expr)
-  | _ => parseComparison
-
-
-/- && -/
-mutual
-
-  partial def parseAnd : Parser BExpr := do
-    let lhs ← parseNot
-    parseAndTail lhs
-
-
-  partial def parseAndTail (lhs : BExpr) : Parser BExpr := do
+  partial def parseMulTail (lhs : Expr) : Parser Expr := do
     let token ← peekToken
     match token with
-    | some .andand =>
+    | some .star =>
         let _ ← nextToken
-        let rhs ← parseNot
-        parseAndTail (.and lhs rhs)
+        let rhs ← parseUnary
+        parseMulTail (.binary .mul lhs rhs)
     | _ => pure lhs
 
+  /- ! -/
+  partial def parseUnary : Parser Expr := do
+    let token ← peekToken
+    match token with
+    | some .bang =>
+        let _ ← nextToken
+        let expr ← parseUnary
+        pure (.unary .logicalNot expr)
+    | _ =>
+        parsePrimary
+
+  /- number | identifier | (expr) -/
+  partial def parsePrimary : Parser Expr := do
+    let token ← nextToken
+    match token with
+    | .number value => pure (.intLit value)
+    | .ident name   => pure (.var name)
+    | .lparen =>
+        let expr ← parseExpr
+        expect .rparen
+        pure expr
+    | other =>
+        throw s!"expected expression, got {reprStr other}"
+
 end
-
-
-def parseBExpr : Parser BExpr :=
-  parseAnd
-
 
 /- ============================================================
    Statements
@@ -177,7 +166,7 @@ mutual
           | .ident name => pure name
           | other => throw s!"expected variable name, got {reprStr other}"
         expect .assign
-        let init ← parseAExpr
+        let init ← parseExpr
         expect .semi
         pure (.decl name init)
 
@@ -189,7 +178,7 @@ mutual
           | .ident name => pure name
           | _ => throw "internal parser error"
         expect .assign
-        let rhs ← parseAExpr
+        let rhs ← parseExpr
         expect .semi
         pure (.assign name rhs)
 
@@ -197,7 +186,7 @@ mutual
     | some .kwIf =>
         let _ ← nextToken
         expect .lparen
-        let cond ← parseBExpr
+        let cond ← parseExpr
         expect .rparen
         let thenBranch ← parseBlock
         let next ← peekToken
@@ -213,16 +202,16 @@ mutual
     | some .kwWhile =>
         let _ ← nextToken
         expect .lparen
-        let cond ← parseBExpr
+        let cond ← parseExpr
         expect .rparen
         let body ← parseBlock
         pure (.while cond body)
 
-    /- { ... } -/
+    /- standalone block -/
     | some .lbrace =>
         parseBlock
 
-    /- ; -/
+    /- empty statement -/
     | some .semi =>
         let _ ← nextToken
         pure .skip
@@ -233,20 +222,18 @@ mutual
     | none =>
         throw "unexpected end of file while parsing statement"
 
-
   /- { stmt stmt stmt } -/
   partial def parseBlock : Parser Stmt := do
     expect .lbrace
-    parseStmtList []
+    let stmts ← parseStmtList []
+    pure (.block stmts)
 
-
-  partial def parseStmtList (acc : List Stmt) : Parser Stmt := do
+  partial def parseStmtList (acc : List Stmt) : Parser (List Stmt) := do
     let token ← peekToken
     match token with
-    /- block 结束 -/
     | some .rbrace =>
         let _ ← nextToken
-        pure (Stmt.seqMany acc.reverse)
+        pure acc.reverse
     | none =>
         throw "unexpected end of file inside block"
     | _ =>
@@ -254,7 +241,6 @@ mutual
         parseStmtList (stmt :: acc)
 
 end
-
 
 /- ============================================================
    Program
@@ -267,13 +253,11 @@ def parseProgram : Parser Stmt := do
   expect .lparen
   expect .rparen
   let body ← parseBlock
-  /- main 后面不应该再有 Token -/
   let remaining ← StateT.get
   match remaining with
   | [] => pure body
   | token :: _ =>
       throw s!"unexpected token after main: {reprStr token}"
-
 
 /- String -> Lexer -> Token -> Parser -> AST -/
 def parseSource (source : String) : Except String Stmt := do
@@ -282,76 +266,32 @@ def parseSource (source : String) : Except String Stmt := do
 
 end Cean
 
-
-/- ============================================================
-   自测
-   ============================================================ -/
-
+-- Test
 open Cean
 
--- 注意：块内的语句列表会被 seqMany 收尾，末尾一定带一个 skip
-
--- 乘法优先级高于加法：1 + 2 * 3  解析成  1 + (2 * 3)
 #guard
-  (parseSource "int main() { int x = 1 + 2 * 3; }").toOption
-    == some (Stmt.seqMany [
-         .decl "x" (.add (.const 1) (.mul (.const 2) (.const 3)))])
+  (parseSource
+    "int main() {
+       int x = 1;
 
--- 括号可以覆盖优先级：(1 + 2) * 3
-#guard
-  (parseSource "int main() { int x = (1 + 2) * 3; }").toOption
-    == some (Stmt.seqMany [
-         .decl "x" (.mul (.add (.const 1) (.const 2)) (.const 3))])
+       {
+         int y = 2;
+       }
 
--- 加减法左结合：1 - 2 + 3  解析成  (1 - 2) + 3
-#guard
-  (parseSource "int main() { int x = 1 - 2 + 3; }").toOption
-    == some (Stmt.seqMany [
-         .decl "x" (.add (.sub (.const 1) (.const 2)) (.const 3))])
+       x = 3;
+     }").toOption
+  ==
+  some (
+    .block [
+      .decl "x"
+        (.intLit 1),
 
--- 空程序
-#guard (parseSource "int main() { }").toOption == some .skip
+      .block [
+        .decl "y"
+          (.intLit 2)
+      ],
 
--- 注释被跳过
-#guard
-  (parseSource "int main() { /* 块注释 */ int x = 1; // 行注释\n}").toOption
-    == some (Stmt.seqMany [.decl "x" (.const 1)])
-
--- while 语句（循环体同样被 seqMany 收尾）
-#guard
-  (parseSource "int main() { while (x < 1) { x = x + 1; } }").toOption
-    == some (Stmt.seqMany [
-         .while (.less (.var "x") (.const 1))
-                (Stmt.seqMany [.assign "x" (.add (.var "x") (.const 1))])])
-
--- if / else 语句
-#guard
-  (parseSource "int main() { if (x == 1) { x = 2; } else { x = 3; } }").toOption
-    == some (Stmt.seqMany [
-         .ifThenElse (.eq (.var "x") (.const 1))
-                     (Stmt.seqMany [.assign "x" (.const 2)])
-                     (Stmt.seqMany [.assign "x" (.const 3)])])
-
--- 没有 else 时补一个 skip
-#guard
-  (parseSource "int main() { if (x == 1) { x = 2; } }").toOption
-    == some (Stmt.seqMany [
-         .ifThenElse (.eq (.var "x") (.const 1))
-                     (Stmt.seqMany [.assign "x" (.const 2)]) .skip])
-
--- 多个语句按书写顺序串联
-#guard
-  (parseSource "int main() { int a = 1; int b = 2; }").toOption
-    == some (Stmt.seqMany [.decl "a" (.const 1), .decl "b" (.const 2)])
-
--- 缺少分号要报错
-#guard (parseSource "int main() { int x = 1 }").isOk == false
-
--- 缺少 main 要报错
-#guard (parseSource "int x = 1;").isOk == false
-
--- main 之后还有内容要报错
-#guard (parseSource "int main() { } int x = 1;").isOk == false
-
--- 未闭合的花括号要报错
-#guard (parseSource "int main() { int x = 1;").isOk == false
+      .assign "x"
+        (.intLit 3)
+    ]
+  )

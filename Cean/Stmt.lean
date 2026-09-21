@@ -2,92 +2,133 @@ import Cean.AST
 
 namespace Cean
 
--- 通过递归定义语句
 inductive Stmt where
   | skip
+
   | decl
       (name : String)
-      (init : AExpr)
+      (init : Expr)
 
   | assign
       (name : String)
-      (value : AExpr)
+      (value : Expr)
 
-  | seq
-      (first : Stmt)
-      (second : Stmt)
+  /--
+  Lexical block.
+
+  保留源代码中的 `{ ... }` 边界。
+  以后 scope / lifetime / shadowing 都依赖它。
+  -/
+  | block
+      (stmts : List Stmt)
 
   | ifThenElse
-      (cond : BExpr)
+      (cond : Expr)
       (thenBranch : Stmt)
       (elseBranch : Stmt)
 
   | while
-      (cond : BExpr)
+      (cond : Expr)
       (body : Stmt)
 
 deriving Repr, BEq
 
--- 把语句列表转换为一个嵌套的语句
-def Stmt.seqMany : List Stmt → Stmt
-  | [] =>
-      .skip
 
-  | stmt :: rest =>
-      .seq stmt (Stmt.seqMany rest)
+/- ============================================================
+   Declared variables
+   ============================================================ -/
 
-def Stmt.declaredNames : Stmt → List String
+/-
+Stmt 是 nested inductive type：
 
-  | .skip =>
-      []
+    Stmt.block : List Stmt → Stmt
 
-  | .decl name _ =>
-      [name]
+所以这里用 mutual recursion 同时遍历 Stmt 和 List Stmt。
+-/
+mutual
 
-  | .assign _ _ =>
-      []
+  def Stmt.declaredNames : Stmt → List String
 
-  | .seq first second =>
-      first.declaredNames
-        ++ second.declaredNames
+    | .skip =>
+        []
 
-  | .ifThenElse _ thenBranch elseBranch =>
-      thenBranch.declaredNames
-        ++ elseBranch.declaredNames
+    | .decl name _ =>
+        [name]
 
-  | .while _ body =>
-      body.declaredNames
+    | .assign _ _ =>
+        []
+
+    | .block stmts =>
+        Stmt.declaredNamesList stmts
+
+    | .ifThenElse _ thenBranch elseBranch =>
+        thenBranch.declaredNames
+          ++ elseBranch.declaredNames
+
+    | .while _ body =>
+        body.declaredNames
+
+
+  def Stmt.declaredNamesList : List Stmt → List String
+
+    | [] =>
+        []
+
+    | stmt :: rest =>
+        stmt.declaredNames
+          ++ Stmt.declaredNamesList rest
+
+end
+
 
 end Cean
 
 
 /- ============================================================
-   自测
+   Tests
    ============================================================ -/
 
 open Cean
 
--- 空列表折叠成 skip
-#guard Stmt.seqMany [] == Stmt.skip
 
--- 两条语句折叠成右结合的嵌套 seq
 #guard
-  Stmt.seqMany [.skip, .skip]
-    == Stmt.seq .skip (Stmt.seq .skip .skip)
+  (Stmt.block []).declaredNames
+    ==
+  []
 
--- declaredNames 收集所有声明点，赋值不算
-#guard (Stmt.assign "x" (.const 1)).declaredNames == []
-#guard
-  (Stmt.seq (.decl "a" (.const 1)) (.decl "b" (.const 2))).declaredNames
-    == ["a", "b"]
 
--- 两个分支里的声明都会被收集
 #guard
-  (Stmt.ifThenElse (.eq (.const 0) (.const 0))
-    (.decl "t" (.const 1)) (.decl "e" (.const 2))).declaredNames
-    == ["t", "e"]
+  (Stmt.block [
+    .decl "a" (.intLit 1),
+    .decl "b" (.intLit 2)
+  ]).declaredNames
+    ==
+  ["a", "b"]
 
--- 循环体里的声明会被收集
+
+-- 最重要的测试：nested block 必须保留下来
 #guard
-  (Stmt.while (.less (.const 0) (.const 1)) (.decl "i" (.const 0))).declaredNames
-    == ["i"]
+  (Stmt.block [
+    .decl "a" (.intLit 1),
+
+    .block [
+      .decl "b" (.intLit 2)
+    ]
+  ]).declaredNames
+    ==
+  ["a", "b"]
+
+#check Expr
+#guard
+  (Stmt.ifThenElse
+    (.binary .eq
+      (.intLit 0)
+      (.intLit 0))
+    (.block [
+      .decl "t" (.intLit 1)
+    ])
+    (.block [
+      .decl "e" (.intLit 2)
+    ])).declaredNames
+    ==
+  ["t", "e"]
